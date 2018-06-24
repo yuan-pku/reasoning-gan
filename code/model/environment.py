@@ -4,13 +4,14 @@ import numpy as np
 from code.data.feed_data import RelationEntityBatcher
 from code.data.grapher import RelationEntityGrapher
 import logging
+from code.model.discriminator import DistMult
 
 logger = logging.getLogger()
 
 
 class Episode(object):
 
-    def __init__(self, graph, data, params):
+    def __init__(self, graph, data, params, discriminator=None):
         self.grapher = graph
         self.batch_size, self.path_len, num_rollouts, test_rollouts, positive_reward, negative_reward, mode, batcher = params
         self.mode = mode
@@ -19,7 +20,7 @@ class Episode(object):
         else:
             self.num_rollouts = test_rollouts
         self.current_hop = 0
-        start_entities, query_relation,  end_entities, all_answers = data
+        start_entities, query_relation, end_entities, all_answers = data
         self.no_examples = start_entities.shape[0]
         self.positive_reward = positive_reward
         self.negative_reward = negative_reward
@@ -31,6 +32,7 @@ class Episode(object):
         self.current_entities = np.array(start_entities)
         self.query_relation = batch_query_relation
         self.all_answers = all_answers
+        self.discriminator = discriminator
 
         next_actions = self.grapher.return_next_actions(self.current_entities, self.start_entities, self.query_relation,
                                                         self.end_entities, self.all_answers, self.current_hop == self.path_len - 1,
@@ -46,14 +48,38 @@ class Episode(object):
     def get_query_relation(self):
         return self.query_relation
 
-    def get_reward(self):
-        reward = (self.current_entities == self.end_entities)
+    def train_reward(self, sess=None):
+        assert sess
+        train_h = np.concatenate([self.start_entities, self.start_entities])
+        train_r = np.concatenate([self.query_relation, self.query_relation])
+        train_t = np.concatenate([self.end_entities, self.current_entities])
+        train_y = np.concatenate([np.ones_like(self.end_entities), - np.ones_like(self.current_entities)])
+        feed_dict = {self.discriminator.batch_h: train_h,
+                     self.discriminator.batch_t: train_t,
+                     self.discriminator.batch_r: train_r,
+                     self.discriminator.batch_y: train_y}
+        _, loss = sess.run([self.discriminator.train_op, self.discriminator.loss], feed_dict)
+        return loss
 
-        # set the True and False values to the values of positive and negative rewards.
-        condlist = [reward == True, reward == False]
-        choicelist = [self.positive_reward, self.negative_reward]
-        reward = np.select(condlist, choicelist)  # [B,]
-        return reward
+    def get_reward(self, sess=None):
+
+            reward = (self.current_entities == self.end_entities)
+            # set the True and False values to the values of positive and negative rewards.
+            condlist = [reward == True, reward == False]
+            choicelist = [self.positive_reward, self.negative_reward]
+            reward = np.select(condlist, choicelist)  # [B,]
+
+            if self.discriminator:
+                assert sess
+                # TODO: move training out of episode
+                feed_dict = {self.discriminator.predict_h: self.start_entities,
+                             self.discriminator.predict_t: self.current_entities,
+                             self.discriminator.predict_r: self.query_relation}
+
+                gan_reward = sess.run(self.discriminator.predict, feed_dict)
+                return reward, gan_reward
+            else:
+                return reward
 
     def __call__(self, action):
         self.current_hop += 1
@@ -84,11 +110,17 @@ class env(object):
             self.batcher = RelationEntityBatcher(input_dir=input_dir,
                                                  batch_size=params['batch_size'],
                                                  entity_vocab=params['entity_vocab'],
-                                                 relation_vocab=params['relation_vocab']
-                                                 )
+                                                 relation_vocab=params['relation_vocab'])
+            self.discriminator = DistMult(batch_size=params['batch_size'],
+                                          neg_size=params['num_rollouts'],
+                                          relTotal=len(params['relation_vocab']),
+                                          entTotal=len(params['entity_vocab']),
+                                          embedding_size=params['dis_embedding_size'],
+                                          weight_decay=params['dis_weight_decay'],
+                                          learning_rate=params['dis_learning_rate'])
         else:
             self.batcher = RelationEntityBatcher(input_dir=input_dir,
-                                                 mode =mode,
+                                                 mode=mode,
                                                  batch_size=params['batch_size'],
                                                  entity_vocab=params['entity_vocab'],
                                                  relation_vocab=params['relation_vocab'])

@@ -141,7 +141,7 @@ class Trainer(object):
         if not restore:
             return tf.global_variables_initializer()
         else:
-            return  self.model_saver.restore(sess, restore)
+            return self.model_saver.restore(sess, restore)
 
 
 
@@ -211,6 +211,7 @@ class Trainer(object):
         train_loss = 0.0
         start_time = time.time()
         self.batch_counter = 0
+        # TODO: train discriminator & generator iteratively
         for episode in self.train_environment.get_episodes():
 
             self.batch_counter += 1
@@ -234,44 +235,49 @@ class Trainer(object):
                 state = episode(idx)
             loss_before_regularization = np.stack(loss_before_regularization, axis=1)
 
-            # get the final reward from the environment
-            rewards = episode.get_reward()
+            # train the discriminator
+            dis_loss = episode.train_reward(sess=sess)
+            logger.info("batch_counter: {0}, loss: {1}".format(self.batch_counter, dis_loss))
 
-            # computed cumulative discounted reward
-            cum_discounted_reward = self.calc_cum_discounted_reward(rewards)  # [B, T]
+            if self.batch_counter > 100:  # after pre-training
+                # get the final reward from the environment
+                rewards, gan_rewards = episode.get_reward(sess=sess)
 
-
-            # backprop
-            batch_total_loss, _ = sess.partial_run(h, [self.loss_op, self.dummy],
-                                                   feed_dict={self.cum_discounted_reward: cum_discounted_reward})
-
-            # print statistics
-            train_loss = 0.98 * train_loss + 0.02 * batch_total_loss
-            avg_reward = np.mean(rewards)
-            # now reshape the reward to [orig_batch_size, num_rollouts], I want to calculate for how many of the
-            # entity pair, atleast one of the path get to the right answer
-            reward_reshape = np.reshape(rewards, (self.batch_size, self.num_rollouts))  # [orig_batch, num_rollouts]
-            reward_reshape = np.sum(reward_reshape, axis=1)  # [orig_batch]
-            reward_reshape = (reward_reshape > 0)
-            num_ep_correct = np.sum(reward_reshape)
-            if np.isnan(train_loss):
-                raise ArithmeticError("Error in computing loss")
-
-            logger.info("batch_counter: {0:4d}, num_hits: {1:7.4f}, avg. reward per batch {2:7.4f}, "
-                        "num_ep_correct {3:4d}, avg_ep_correct {4:7.4f}, train loss {5:7.4f}".
-                        format(self.batch_counter, np.sum(rewards), avg_reward, num_ep_correct,
-                               (num_ep_correct / self.batch_size),
-                               train_loss))
-
-            if self.batch_counter%self.eval_every == 0:
-                with open(self.output_dir + '/scores.txt', 'a') as score_file:
-                    score_file.write("Score for iteration " + str(self.batch_counter) + "\n")
-                os.mkdir(self.path_logger_file + "/" + str(self.batch_counter))
-                self.path_logger_file_ = self.path_logger_file + "/" + str(self.batch_counter) + "/paths"
+                # computed cumulative discounted reward
+                cum_discounted_reward = self.calc_cum_discounted_reward(gan_rewards)  # [B, T]
 
 
+                # backprop
+                batch_total_loss, _ = sess.partial_run(h, [self.loss_op, self.dummy],
+                                                       feed_dict={self.cum_discounted_reward: cum_discounted_reward})
 
-                self.test(sess, beam=True, print_paths=False)
+                # print statistics
+                train_loss = 0.98 * train_loss + 0.02 * batch_total_loss
+                avg_reward = np.mean(rewards)
+                # now reshape the reward to [orig_batch_size, num_rollouts], I want to calculate for how many of the
+                # entity pair, atleast one of the path get to the right answer
+                reward_reshape = np.reshape(rewards, (self.batch_size, self.num_rollouts))  # [orig_batch, num_rollouts]
+                reward_reshape = np.sum(reward_reshape, axis=1)  # [orig_batch]
+                reward_reshape = (reward_reshape > 0)
+                num_ep_correct = np.sum(reward_reshape)
+                if np.isnan(train_loss):
+                    raise ArithmeticError("Error in computing loss")
+
+                logger.info("batch_counter: {0:4d}, num_hits: {1:7.4f}, avg. reward per batch {2:7.4f}, "
+                            "num_ep_correct {3:4d}, avg_ep_correct {4:7.4f}, train loss {5:7.4f}".
+                            format(self.batch_counter, np.sum(rewards), avg_reward, num_ep_correct,
+                                   (num_ep_correct / self.batch_size),
+                                   train_loss))
+
+                if self.batch_counter%self.eval_every == 0:
+                    with open(self.output_dir + '/scores.txt', 'a') as score_file:
+                        score_file.write("Score for iteration " + str(self.batch_counter) + "\n")
+                    os.mkdir(self.path_logger_file + "/" + str(self.batch_counter))
+                    self.path_logger_file_ = self.path_logger_file + "/" + str(self.batch_counter) + "/paths"
+
+
+
+                    self.test(sess, beam=True, print_paths=False)
 
             logger.info('Memory usage: %s (kb)' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
