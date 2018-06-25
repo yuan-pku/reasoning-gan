@@ -2,11 +2,11 @@
 
 data_input_dir="datasets/data_preprocessed/WN18RR/"
 vocab_dir="datasets/data_preprocessed/WN18RR/vocab"
-total_iterations=1000
+total_iterations=4000
 path_length=3
 hidden_size=50
 embedding_size=50
-batch_size=256
+batch_size=128
 beta=0.05
 Lambda=0.05
 use_entity_embeddings=1

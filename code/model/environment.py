@@ -49,16 +49,20 @@ class Episode(object):
         return self.query_relation
 
     def train_reward(self, sess=None):
-        assert sess
-        train_h = np.concatenate([self.start_entities, self.start_entities])
-        train_r = np.concatenate([self.query_relation, self.query_relation])
-        train_t = np.concatenate([self.end_entities, self.current_entities])
-        train_y = np.concatenate([np.ones_like(self.end_entities), - np.ones_like(self.current_entities)])
+        train_h = np.stack([self.start_entities, self.start_entities], -1)
+        train_r = np.stack([self.query_relation, self.query_relation], -1)
+        train_t = np.stack([self.end_entities, self.current_entities], -1)
         feed_dict = {self.discriminator.batch_h: train_h,
                      self.discriminator.batch_t: train_t,
-                     self.discriminator.batch_r: train_r,
-                     self.discriminator.batch_y: train_y}
-        _, loss = sess.run([self.discriminator.train_op, self.discriminator.loss], feed_dict)
+                     self.discriminator.batch_r: train_r}
+
+        for i in range(10):
+            _, loss = sess.run([self.discriminator.train_op, self.discriminator.loss], feed_dict)
+
+        # feed_dict = {self.discriminator.predict_h: train_h,
+        #              self.discriminator.predict_t: train_t,
+        #              self.discriminator.predict_r: train_r}
+        # print(sess.run(self.discriminator.predict, feed_dict))
         return loss
 
     def get_reward(self, sess=None):
@@ -70,7 +74,6 @@ class Episode(object):
             reward = np.select(condlist, choicelist)  # [B,]
 
             if self.discriminator:
-                assert sess
                 # TODO: move training out of episode
                 feed_dict = {self.discriminator.predict_h: self.start_entities,
                              self.discriminator.predict_t: self.current_entities,
@@ -136,7 +139,7 @@ class env(object):
         if self.mode == 'train':
             for data in self.batcher.yield_next_batch_train():
 
-                yield Episode(self.grapher, data, params)
+                yield Episode(self.grapher, data, params, discriminator=self.discriminator)
         else:
             for data in self.batcher.yield_next_batch_test():
                 if data == None:
