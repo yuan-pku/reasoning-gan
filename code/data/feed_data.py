@@ -77,7 +77,7 @@ class RelationEntityBatcher():
         while True:
             batch_idx = np.random.randint(0, self.store.shape[0], size=self.batch_size)
             batch = self.store[batch_idx, :]
-            e1 = batch[:,0]
+            e1 = batch[:, 0]
             r = batch[:, 1]
             e2 = batch[:, 2]
             all_e2s = []
@@ -93,7 +93,6 @@ class RelationEntityBatcher():
             if remaining_triples == 0:
                 return
 
-
             if remaining_triples - self.batch_size > 0:
                 batch_idx = np.arange(current_idx, current_idx+self.batch_size)
                 current_idx += self.batch_size
@@ -102,7 +101,7 @@ class RelationEntityBatcher():
                 batch_idx = np.arange(current_idx, self.store.shape[0])
                 remaining_triples = 0
             batch = self.store[batch_idx, :]
-            e1 = batch[:,0]
+            e1 = batch[:, 0]
             r = batch[:, 1]
             e2 = batch[:, 2]
             all_e2s = []

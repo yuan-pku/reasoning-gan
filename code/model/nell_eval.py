@@ -15,13 +15,13 @@ def nell_eval(model_answers, correct_answers):
     preds = {}
     with open(test_prediction_path) as f:
         for line in f:
-            e1,e2, score = line.strip().split()
+            e1, e2, score = line.strip().split()
             score = float(score)
             if (e1, e2) not in preds:
                 preds[(e1, e2)] = score
             else:
-                if preds[(e1,e2)] < score:
-                    preds[(e1,e2)] = score
+                if preds[(e1, e2)] < score:
+                    preds[(e1, e2)] = score
 
     def get_pred_score(e1, e2):
         if (e1, e2) in preds:
@@ -30,8 +30,8 @@ def nell_eval(model_answers, correct_answers):
             return -np.inf
     test_pairs = defaultdict(lambda : defaultdict(int))
     for line in test_data:
-        e1 = line.split(',')[0].replace('thing$','')
-        e2 = line.split(',')[1].split(':')[0].replace('thing$','')
+        e1 = line.split(',')[0].replace('thing$', '')
+        e2 = line.split(',')[1].split(':')[0].replace('thing$', '')
 
         label = 1 if line[-2] == '+' else 0
         test_pairs[e1][e2] = label
@@ -44,7 +44,7 @@ def nell_eval(model_answers, correct_answers):
     for e1 in test_pairs:
         y_true = []
         y_score = []
-        for  e2 in test_pairs[e1]:
+        for e2 in test_pairs[e1]:
             score = get_pred_score(e1, e2)
             score_all.append(score)
             y_score.append(score)
@@ -62,4 +62,5 @@ def nell_eval(model_answers, correct_answers):
             ranks.append(0)
         aps.append(np.mean(ranks))
     mean_ap = np.mean(aps)
-    print('MINERVA MAP: {} ({} queries evaluated)'.format( mean_ap, len(aps)))
+    print('MINERVA MAP: {} ({} queries evaluated)'.format(mean_ap, len(aps)))
+    return mean_ap

@@ -16,3 +16,9 @@ base_output_dir="output/fb15k-237/"
 load_model=0
 model_load_dir="saved_models/fb15k-237"
 nell_evaluation=0
+num_d_steps=10
+total_pretrain_iterations=0
+dis_weight_decay=1e-5
+dis_embedding_size=100
+
+

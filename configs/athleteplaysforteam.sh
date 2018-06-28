@@ -16,3 +16,7 @@ base_output_dir="output/athleteplaysforteam/"
 load_model=0
 model_load_dir="/home/sdhuliawala/logs/RL-Path-RNN/wn18rrr/edb6_3_0.05_10_0.05/model/model.ckpt"
 nell_evaluation=1
+num_d_steps=10
+total_pretrain_iterations=100
+dis_weight_decay=1e-5
+dis_embedding_size=100

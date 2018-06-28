@@ -37,6 +37,8 @@ def read_options():
     parser.add_argument("--dis_embedding_size", default=100, type=int)
     parser.add_argument("--dis_weight_decay", default=.0, type=float)
     parser.add_argument("--dis_learning_rate", default=1e-3, type=float)
+    parser.add_argument("--num_d_steps", default=1, type=int)
+    parser.add_argument("--total_pretrain_iterations", default=0, type=int)
 
     parser.add_argument("--Lambda", default=0.0, type=float)
     parser.add_argument("--pool", default="max", type=str)

@@ -4,9 +4,9 @@ import tensorflow as tf
 
 class Model(object):
 
-    def __init__(self, batch_size, neg_size, entTotal, relTotal, embedding_size, weight_decay, learning_rate):
+    def __init__(self, batch_size, num_rollouts, entTotal, relTotal, embedding_size, weight_decay, learning_rate):
         self.batch_size = batch_size
-        self.neg_size = neg_size  # neg_size == num_rollouts
+        self.num_rollouts = num_rollouts  # neg_size == num_rollouts - 1 when negative sampling
         self.weight_decay = weight_decay
         self.learning_rate = learning_rate
         self.entTotal = entTotal
@@ -20,26 +20,15 @@ class Model(object):
         self.predict_def()
 
     def get_all_instance(self, in_batch=False):
-        if in_batch:
-            return [tf.transpose(tf.reshape(self.batch_h, [1 + self.neg_size, -1]), [1, 0]),
-                    tf.transpose(tf.reshape(self.batch_t, [1 + self.neg_size, -1]), [1, 0]),
-                    tf.transpose(tf.reshape(self.batch_r, [1 + self.neg_size, -1]), [1, 0])]
-        else:
-            return [self.batch_h, self.batch_t, self.batch_r]
-
-    def get_all_labels(self, in_batch=False):
-        if in_batch:
-            return tf.transpose(tf.reshape(self.batch_y, [1 + self.neg_size, -1]), [1, 0])
-        else:
-            return self.batch_y
+        return [self.batch_h, self.batch_t, self.batch_r]
 
     def get_predict_instance(self):
         return [self.predict_h, self.predict_t, self.predict_r]
 
     def input_def(self):
-        self.batch_h = tf.placeholder(tf.int32, [self.batch_size * self.neg_size, 2])
-        self.batch_t = tf.placeholder(tf.int32, [self.batch_size * self.neg_size, 2])
-        self.batch_r = tf.placeholder(tf.int32, [self.batch_size * self.neg_size, 2])
+        self.batch_h = tf.placeholder(tf.int32, [self.batch_size * self.num_rollouts, 2])
+        self.batch_t = tf.placeholder(tf.int32, [self.batch_size * self.num_rollouts, 2])
+        self.batch_r = tf.placeholder(tf.int32, [self.batch_size * self.num_rollouts, 2])
         self.predict_h = tf.placeholder(tf.int32, [None])
         self.predict_t = tf.placeholder(tf.int32, [None])
         self.predict_r = tf.placeholder(tf.int32, [None])
@@ -89,6 +78,6 @@ class DistMult(Model):
         predict_t_e = tf.nn.embedding_lookup(self.ent_embeddings, predict_t)
         predict_r_e = tf.nn.embedding_lookup(self.rel_embeddings, predict_r)
         # min E[log(1 - D)] -> max. E[log D] -> reward func.
-        self.predict = tf.log(tf.nn.sigmoid(tf.reduce_sum(self._calc(predict_h_e, predict_t_e, predict_r_e), 1)))
+        # self.predict = tf.log(tf.nn.sigmoid(tf.reduce_sum(self._calc(predict_h_e, predict_t_e, predict_r_e), 1)))
         self.predict = tf.reduce_sum(self._calc(predict_h_e, predict_t_e, predict_r_e), -1)
 

@@ -18,11 +18,12 @@ import sys
 from code.model.baseline import ReactiveBaseline
 from code.model.nell_eval import nell_eval
 from scipy.misc import logsumexp as lse
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 logger = logging.getLogger()
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
-
+tf.set_random_seed(1234)
+np.random.seed(1234)
 
 class Trainer(object):
     def __init__(self, params):
@@ -36,6 +37,8 @@ class Trainer(object):
         self.dev_test_environment = env(params, 'dev')
         self.test_test_environment = env(params, 'test')
         self.test_environment = self.dev_test_environment
+        self.test_environment.discriminator = self.train_environment.discriminator
+        self.test_test_environment.discriminator = self.train_environment.discriminator
         self.rev_relation_vocab = self.train_environment.grapher.rev_relation_vocab
         self.rev_entity_vocab = self.train_environment.grapher.rev_entity_vocab
         self.max_hits_at_10 = 0
@@ -189,8 +192,8 @@ class Trainer(object):
         if pretrain:
             fetches = self.per_example_loss + self.action_idx + self.per_example_logits
         else:
-            fetches = self.per_example_loss  + self.action_idx + [self.loss_op] + self.per_example_logits + [self.dummy]
-        feeds =  [self.first_state_of_test] + self.candidate_relation_sequence+ self.candidate_entity_sequence + self.input_path + \
+            fetches = self.per_example_loss + self.action_idx + [self.loss_op] + self.per_example_logits + [self.dummy]
+        feeds = [self.first_state_of_test] + self.candidate_relation_sequence+ self.candidate_entity_sequence + self.input_path + \
                 [self.query_relation] + [self.cum_discounted_reward] + [self.range_arr] + self.entity_sequence
 
 
@@ -210,6 +213,9 @@ class Trainer(object):
     def train(self, sess):
         # import pdb
         # pdb.set_trace()
+
+        # pre-train discriminator by negative sampling
+        self.train_environment.pretrain(sess, max_epoch=self.total_pretrain_iterations)
 
         fetches, feeds, feed_dict = self.gpu_io_setup()
 
@@ -243,7 +249,7 @@ class Trainer(object):
             loss_before_regularization = np.stack(loss_before_regularization, axis=1)
 
             # train the discriminator
-            dis_loss = 0.02 * episode.train_reward(sess=sess) + 0.98 * dis_loss
+            dis_loss = 0.02 * episode.train_reward(sess=sess, num_d_steps=self.num_d_steps) + 0.98 * dis_loss
             logger.info("batch_counter: {0}, loss: {1}".format(self.batch_counter, dis_loss))
 
             # get the final reward from the environment
@@ -289,7 +295,7 @@ class Trainer(object):
             if self.batch_counter >= self.total_iterations:
                 break
 
-    def test(self, sess, beam=False, print_paths=False, save_model = True, auc = False):
+    def test(self, sess, beam=False, print_paths=False, save_model=True, auc = False):
         batch_counter = 0
         paths = defaultdict(list)
         answers = []
@@ -300,6 +306,13 @@ class Trainer(object):
         all_final_reward_10 = 0
         all_final_reward_20 = 0
         auc = 0
+        # TODO: use more reasonable evaluation for discriminator
+        all_final_reward_1_dis = 0
+        all_final_reward_3_dis = 0
+        all_final_reward_5_dis = 0
+        all_final_reward_10_dis = 0
+        all_final_reward_20_dis = 0
+        auc_dis = 0
 
         total_examples = self.test_environment.total_no_examples
         for episode in tqdm(self.test_environment.get_episodes()):
@@ -314,7 +327,7 @@ class Trainer(object):
             # get initial state
             state = episode.get_state()
             mem = self.agent.get_mem_shape()
-            agent_mem = np.zeros((mem[0], mem[1], temp_batch_size*self.test_rollouts, mem[3]) ).astype('float32')
+            agent_mem = np.zeros((mem[0], mem[1], temp_batch_size*self.test_rollouts, mem[3])).astype('float32')
             previous_relation = np.ones((temp_batch_size * self.test_rollouts, ), dtype='int64') * self.relation_vocab[
                 'DUMMY_START_RELATION']
             feed_dict[self.range_arr] = np.arange(temp_batch_size * self.test_rollouts)
@@ -339,7 +352,7 @@ class Trainer(object):
                 feed_dict[self.prev_relation] = previous_relation
 
                 loss, agent_mem, test_scores, test_action_idx, chosen_relation = sess.run(
-                    [ self.test_loss, self.test_state, self.test_logits, self.test_action_idx, self.chosen_relation],
+                    [self.test_loss, self.test_state, self.test_logits, self.test_action_idx, self.chosen_relation],
                     feed_dict=feed_dict)
 
 
@@ -359,7 +372,7 @@ class Trainer(object):
 
                     y += np.repeat([b*k for b in range(temp_batch_size)], k)
                     state['current_entities'] = state['current_entities'][y]
-                    state['next_relations'] = state['next_relations'][y,:]
+                    state['next_relations'] = state['next_relations'][y, :]
                     state['next_entities'] = state['next_entities'][y, :]
                     agent_mem = agent_mem[:, :, y, :]
                     test_action_idx = x
@@ -390,10 +403,13 @@ class Trainer(object):
 
 
             # ask environment for final reward
-            rewards = episode.get_reward()  # [B*test_rollouts]
+            rewards, rewards_gan = episode.get_reward(sess)  # [B*test_rollouts]
             reward_reshape = np.reshape(rewards, (temp_batch_size, self.test_rollouts))  # [orig_batch, test_rollouts]
             self.log_probs = np.reshape(self.log_probs, (temp_batch_size, self.test_rollouts))
+            score_dis = np.reshape(rewards_gan, (temp_batch_size, self.test_rollouts))  # scores given by discriminator
             sorted_indx = np.argsort(-self.log_probs)
+            sorted_indx_dis = np.argsort(-score_dis)
+
             final_reward_1 = 0
             final_reward_3 = 0
             final_reward_5 = 0
@@ -405,10 +421,10 @@ class Trainer(object):
             for b in range(temp_batch_size):
                 answer_pos = None
                 seen = set()
-                pos=0
+                pos = 0
                 if self.pool == 'max':
                     for r in sorted_indx[b]:
-                        if reward_reshape[b,r] == self.positive_reward:
+                        if reward_reshape[b, r] == self.positive_reward:
                             answer_pos = pos
                             break
                         if ce[b, r] not in seen:
@@ -418,18 +434,17 @@ class Trainer(object):
                     scores = defaultdict(list)
                     answer = ''
                     for r in sorted_indx[b]:
-                        scores[ce[b,r]].append(self.log_probs[b,r])
-                        if reward_reshape[b,r] == self.positive_reward:
-                            answer = ce[b,r]
+                        scores[ce[b, r]].append(self.log_probs[b, r])
+                        if reward_reshape[b, r] == self.positive_reward:
+                            answer = ce[b, r]
                     final_scores = defaultdict(float)
                     for e in scores:
                         final_scores[e] = lse(scores[e])
                     sorted_answers = sorted(final_scores, key=final_scores.get, reverse=True)
-                    if answer in  sorted_answers:
+                    if answer in sorted_answers:
                         answer_pos = sorted_answers.index(answer)
                     else:
                         answer_pos = None
-
 
                 if answer_pos != None:
                     if answer_pos < 20:
@@ -474,12 +489,103 @@ class Trainer(object):
             all_final_reward_20 += final_reward_20
             auc += AP
 
+            # evaluate discriminator
+            final_reward_1 = 0
+            final_reward_3 = 0
+            final_reward_5 = 0
+            final_reward_10 = 0
+            final_reward_20 = 0
+            AP = 0
+            ce = episode.state['current_entities'].reshape((temp_batch_size, self.test_rollouts))
+            se = episode.start_entities.reshape((temp_batch_size, self.test_rollouts))
+            for b in range(temp_batch_size):
+                answer_pos = None
+                seen = set()
+                pos = 0
+                if self.pool == 'max':
+                    for r in sorted_indx_dis[b]:
+                        if reward_reshape[b, r] == self.positive_reward:
+                            answer_pos = pos
+                            break
+                        if ce[b, r] not in seen:
+                            seen.add(ce[b, r])
+                            pos += 1
+                if self.pool == 'sum':
+                    scores = defaultdict(list)
+                    answer = ''
+                    for r in sorted_indx_dis[b]:
+                        scores[ce[b, r]].append(self.log_probs[b, r])
+                        if reward_reshape[b, r] == self.positive_reward:
+                            answer = ce[b, r]
+                    final_scores = defaultdict(float)
+                    for e in scores:
+                        final_scores[e] = lse(scores[e])
+                    sorted_answers = sorted(final_scores, key=final_scores.get, reverse=True)
+                    if answer in sorted_answers:
+                        answer_pos = sorted_answers.index(answer)
+                    else:
+                        answer_pos = None
+
+                if answer_pos != None:
+                    if answer_pos < 20:
+                        final_reward_20 += 1
+                        if answer_pos < 10:
+                            final_reward_10 += 1
+                            if answer_pos < 5:
+                                final_reward_5 += 1
+                                if answer_pos < 3:
+                                    final_reward_3 += 1
+                                    if answer_pos < 1:
+                                        final_reward_1 += 1
+                if answer_pos == None:
+                    AP += 0
+                else:
+                    AP += 1.0 / ((answer_pos + 1))
+                if print_paths:
+                    qr = self.train_environment.grapher.rev_relation_vocab[self.qr[b * self.test_rollouts]]
+                    start_e = self.rev_entity_vocab[episode.start_entities[b * self.test_rollouts]]
+                    end_e = self.rev_entity_vocab[episode.end_entities[b * self.test_rollouts]]
+                    paths[str(qr)].append(str(start_e) + "\t" + str(end_e) + "\n")
+                    paths[str(qr)].append("Reward:" + str(1 if answer_pos != None and answer_pos < 10 else 0) + "\n")
+                    for r in sorted_indx[b]:
+                        indx = b * self.test_rollouts + r
+                        if rewards[indx] == self.positive_reward:
+                            rev = 1
+                        else:
+                            rev = -1
+                        answers.append(
+                            self.rev_entity_vocab[se[b, r]] + '\t' + self.rev_entity_vocab[ce[b, r]] + '\t' + str(
+                                self.log_probs[b, r]) + '\n')
+                        paths[str(qr)].append(
+                            '\t'.join([str(self.rev_entity_vocab[e[indx]]) for e in
+                                       self.entity_trajectory]) + '\n' + '\t'.join(
+                                [str(self.rev_relation_vocab[re[indx]]) for re in
+                                 self.relation_trajectory]) + '\n' + str(
+                                rev) + '\n' + str(
+                                self.log_probs[b, r]) + '\n___' + '\n')
+                    paths[str(qr)].append("#####################\n")
+
+            all_final_reward_1_dis += final_reward_1
+            all_final_reward_3_dis += final_reward_3
+            all_final_reward_5_dis += final_reward_5
+            all_final_reward_10_dis += final_reward_10
+            all_final_reward_20_dis += final_reward_20
+            auc_dis += AP
+
         all_final_reward_1 /= total_examples
         all_final_reward_3 /= total_examples
         all_final_reward_5 /= total_examples
         all_final_reward_10 /= total_examples
         all_final_reward_20 /= total_examples
         auc /= total_examples
+
+        all_final_reward_1_dis /= total_examples
+        all_final_reward_3_dis /= total_examples
+        all_final_reward_5_dis /= total_examples
+        all_final_reward_10_dis /= total_examples
+        all_final_reward_20_dis /= total_examples
+        auc_dis /= total_examples
+
         if save_model:
             if all_final_reward_10 >= self.max_hits_at_10:
                 self.max_hits_at_10 = all_final_reward_10
@@ -510,6 +616,19 @@ class Trainer(object):
             score_file.write("auc: {0:7.4f}".format(auc))
             score_file.write("\n")
             score_file.write("\n")
+            score_file.write("Hits@1: {0:7.4f}".format(all_final_reward_1_dis))
+            score_file.write("\n")
+            score_file.write("Hits@3: {0:7.4f}".format(all_final_reward_3_dis))
+            score_file.write("\n")
+            score_file.write("Hits@5: {0:7.4f}".format(all_final_reward_5_dis))
+            score_file.write("\n")
+            score_file.write("Hits@10: {0:7.4f}".format(all_final_reward_10_dis))
+            score_file.write("\n")
+            score_file.write("Hits@20: {0:7.4f}".format(all_final_reward_20_dis))
+            score_file.write("\n")
+            score_file.write("auc: {0:7.4f}".format(auc_dis))
+            score_file.write("\n")
+            score_file.write("\n")
 
         logger.info("Hits@1: {0:7.4f}".format(all_final_reward_1))
         logger.info("Hits@3: {0:7.4f}".format(all_final_reward_3))
@@ -517,6 +636,12 @@ class Trainer(object):
         logger.info("Hits@10: {0:7.4f}".format(all_final_reward_10))
         logger.info("Hits@20: {0:7.4f}".format(all_final_reward_20))
         logger.info("auc: {0:7.4f}".format(auc))
+        logger.info("Hits@1: {0:7.4f}".format(all_final_reward_1_dis))
+        logger.info("Hits@3: {0:7.4f}".format(all_final_reward_3_dis))
+        logger.info("Hits@5: {0:7.4f}".format(all_final_reward_5_dis))
+        logger.info("Hits@10: {0:7.4f}".format(all_final_reward_10_dis))
+        logger.info("Hits@20: {0:7.4f}".format(all_final_reward_20_dis))
+        logger.info("auc: {0:7.4f}".format(auc_dis))
 
     def top_k(self, scores, k):
         scores = scores.reshape(-1, k * self.max_num_actions)  # [B, (k*max_num_actions)]
@@ -596,5 +721,7 @@ if __name__ == '__main__':
 
         print options['nell_evaluation']
         if options['nell_evaluation'] == 1:
-            nell_eval(path_logger_file + "/" + "test_beam/" + "pathsanswers", trainer.data_input_dir+'/sort_test.pairs' )
+            mean_ap = nell_eval(path_logger_file + "/" + "test_beam/" + "pathsanswers", trainer.data_input_dir+'/sort_test.pairs' )
+            with open(output_dir + '/scores.txt', 'a') as score_file:
+                score_file.write("MINERVA MAP: {} \n".format(mean_ap))
 
