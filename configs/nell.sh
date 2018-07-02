@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
-data_input_dir="datasets/data_preprocessed/nell-995/"
+data_input_dir="datasets/data_preprocessed/nell/"
 vocab_dir="datasets/data_preprocessed/nell/vocab"
-total_iterations=3000
+total_iterations=8000
 path_length=3
 hidden_size=50
 embedding_size=50
-batch_size=128
+batch_size=256
 beta=0.05
 Lambda=0.02
 use_entity_embeddings=0

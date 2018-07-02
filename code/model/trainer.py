@@ -22,8 +22,8 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 logger = logging.getLogger()
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
-tf.set_random_seed(1234)
-np.random.seed(1234)
+tf.set_random_seed(234)
+np.random.seed(234)
 
 class Trainer(object):
     def __init__(self, params):
@@ -47,6 +47,7 @@ class Trainer(object):
         # optimize
         self.baseline = ReactiveBaseline(l=self.Lambda)
         self.optimizer = tf.train.AdamOptimizer(self.learning_rate)
+        self.summary_writer = tf.summary.FileWriter(self.output_dir, graph=tf.get_default_graph())
 
 
     def calc_reinforce_loss(self):
@@ -92,8 +93,6 @@ class Trainer(object):
         self.cum_discounted_reward = tf.placeholder(tf.float32, [None, self.path_length],
                                                     name="cumulative_discounted_reward")
 
-
-
         for t in range(self.path_length):
             next_possible_relations = tf.placeholder(tf.int32, [None, self.max_num_actions],
                                                    name="next_relations_{}".format(t))
@@ -115,6 +114,46 @@ class Trainer(object):
 
         self.loss_op = self.calc_reinforce_loss()
 
+        tf.summary.scalar('decaying_beta', self.decaying_beta)
+        tf.summary.scalar('loss', self.loss_op)
+        tf.summary.scalar('loss_before_reg', tf.reduce_mean(self.loss_before_reg))
+        self.gan_reward_ph = tf.placeholder(tf.float32, shape=(None,))
+        tf.summary.histogram('rewards', self.gan_reward_ph)
+        self.merged_summary = tf.summary.merge_all()
+
+        self.dev_all_final_reward_1 = tf.Variable(0.0)
+        self.dev_all_final_reward_3 = tf.Variable(0.0)
+        self.dev_all_final_reward_5 = tf.Variable(0.0)
+        self.dev_all_final_reward_10 = tf.Variable(0.0)
+        self.dev_all_final_reward_20 = tf.Variable(0.0)
+        self.dev_map = tf.Variable(0.0)
+        self.dev_all_final_reward_1_dis = tf.Variable(0.0)
+        self.dev_all_final_reward_3_dis = tf.Variable(0.0)
+        self.dev_all_final_reward_5_dis = tf.Variable(0.0)
+        self.dev_all_final_reward_10_dis = tf.Variable(0.0)
+        self.dev_all_final_reward_20_dis = tf.Variable(0.0)
+        self.dev_map_dis = tf.Variable(0.0)
+
+        dev_all_final_reward_1_var = tf.summary.scalar('hit_at_1', self.dev_all_final_reward_1)
+        dev_all_final_reward_3_var = tf.summary.scalar('hit_at_3', self.dev_all_final_reward_3)
+        dev_all_final_reward_5_var = tf.summary.scalar('hit_at_5', self.dev_all_final_reward_5)
+        dev_all_final_reward_10_var = tf.summary.scalar('hit_at_10', self.dev_all_final_reward_10)
+        dev_all_final_reward_20_var = tf.summary.scalar('hit_at_20', self.dev_all_final_reward_20)
+        dev_all_final_reward_1_var_dis = tf.summary.scalar('hit_at_1_dis', self.dev_all_final_reward_1_dis)
+        dev_all_final_reward_3_var_dis = tf.summary.scalar('hit_at_3_dis', self.dev_all_final_reward_3_dis)
+        dev_all_final_reward_5_var_dis = tf.summary.scalar('hit_at_5_dis', self.dev_all_final_reward_5_dis)
+        dev_all_final_reward_10_var_dis = tf.summary.scalar('hit_at_10_dis', self.dev_all_final_reward_10_dis)
+        dev_all_final_reward_20_var_dis = tf.summary.scalar('hit_at_20_dis', self.dev_all_final_reward_20_dis)
+        dev_map_var = tf.summary.scalar('MAP', self.dev_map)
+        dev_map_var_dis = tf.summary.scalar('MAP_dis', self.dev_map_dis)
+
+        self.merged_dev_summary = tf.summary.merge([dev_all_final_reward_1_var, dev_all_final_reward_3_var,
+                                                    dev_all_final_reward_5_var, dev_all_final_reward_10_var,
+                                                    dev_all_final_reward_20_var, dev_all_final_reward_1_var_dis,
+                                                    dev_all_final_reward_3_var_dis, dev_all_final_reward_5_var_dis,
+                                                    dev_all_final_reward_10_var_dis, dev_all_final_reward_20_var_dis,
+                                                    dev_map_var, dev_map_var_dis])
+
         # backprop
         self.train_op = self.bp(self.loss_op)
 
@@ -128,7 +167,6 @@ class Trainer(object):
         self.next_entities = tf.placeholder(tf.int32, shape=[None, self.max_num_actions])
 
         self.current_entities = tf.placeholder(tf.int32, shape=[None,])
-
 
 
         with tf.variable_scope("policy_steps_unroll") as scope:
@@ -192,9 +230,9 @@ class Trainer(object):
         if pretrain:
             fetches = self.per_example_loss + self.action_idx + self.per_example_logits
         else:
-            fetches = self.per_example_loss + self.action_idx + [self.loss_op] + self.per_example_logits + [self.dummy]
+            fetches = self.per_example_loss + self.action_idx + [self.loss_op] + self.per_example_logits + [self.dummy] + [self.merged_summary]
         feeds = [self.first_state_of_test] + self.candidate_relation_sequence+ self.candidate_entity_sequence + self.input_path + \
-                [self.query_relation] + [self.cum_discounted_reward] + [self.range_arr] + self.entity_sequence
+                [self.query_relation] + [self.cum_discounted_reward] + [self.range_arr] + self.entity_sequence + [self.gan_reward_ph]
 
 
         feed_dict = [{} for _ in range(self.path_length)]
@@ -218,16 +256,19 @@ class Trainer(object):
         self.train_environment.pretrain(sess, max_epoch=self.total_pretrain_iterations)
 
         fetches, feeds, feed_dict = self.gpu_io_setup()
+        fetches_dis, feeds_dis, feed_dict_dis = self.gpu_io_setup(pretrain=True)
 
         train_loss = 0.0
         dis_loss = 0.0
         start_time = time.time()
         self.batch_counter = 0
-        # TODO: train discriminator & generator iteratively
         for episode in self.train_environment.get_episodes():
 
             self.batch_counter += 1
-            h = sess.partial_run_setup(fetches=fetches, feeds=feeds)
+            if self.batch_counter % 2 == 0:
+                h = sess.partial_run_setup(fetches=fetches, feeds=feeds)
+            else:
+                h = sess.partial_run_setup(fetches=fetches_dis, feeds=feeds_dis)
             gc.collect()
             feed_dict[0][self.query_relation] = episode.get_query_relation()
 
@@ -260,8 +301,10 @@ class Trainer(object):
 
 
             # backprop
-            batch_total_loss, _ = sess.partial_run(h, [self.loss_op, self.dummy],
-                                                   feed_dict={self.cum_discounted_reward: cum_discounted_reward})
+            batch_total_loss, _, merged_summary_val = sess.partial_run(h, [self.loss_op, self.dummy, self.merged_summary],
+                                                                       feed_dict={self.cum_discounted_reward: cum_discounted_reward,
+                                                                                  self.gan_reward_ph: gan_rewards})
+            self.summary_writer.add_summary(merged_summary_val, self.batch_counter)
 
             # print statistics
             train_loss = 0.98 * train_loss + 0.02 * batch_total_loss
@@ -281,13 +324,13 @@ class Trainer(object):
                                (num_ep_correct / self.batch_size),
                                train_loss))
 
-            if self.batch_counter%self.eval_every == 0:
+            if self.batch_counter%(self.eval_every*2) == 0:
                 with open(self.output_dir + '/scores.txt', 'a') as score_file:
                     score_file.write("Score for iteration " + str(self.batch_counter) + "\n")
                 os.mkdir(self.path_logger_file + "/" + str(self.batch_counter))
                 self.path_logger_file_ = self.path_logger_file + "/" + str(self.batch_counter) + "/paths"
 
-                self.test(sess, beam=True, print_paths=False)
+                self.test(sess, beam=True, print_paths=False, summary=True)
 
             logger.info('Memory usage: %s (kb)' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
@@ -295,7 +338,7 @@ class Trainer(object):
             if self.batch_counter >= self.total_iterations:
                 break
 
-    def test(self, sess, beam=False, print_paths=False, save_model=True, auc = False):
+    def test(self, sess, beam=False, print_paths=False, save_model=True, auc = False, summary=False):
         batch_counter = 0
         paths = defaultdict(list)
         answers = []
@@ -587,8 +630,8 @@ class Trainer(object):
         auc_dis /= total_examples
 
         if save_model:
-            if all_final_reward_10 >= self.max_hits_at_10:
-                self.max_hits_at_10 = all_final_reward_10
+            if auc >= self.max_hits_at_10:
+                self.max_hits_at_10 = auc
                 self.save_path = self.model_saver.save(sess, self.model_dir + "model" + '.ckpt')
 
         if print_paths:
@@ -642,6 +685,22 @@ class Trainer(object):
         logger.info("Hits@10: {0:7.4f}".format(all_final_reward_10_dis))
         logger.info("Hits@20: {0:7.4f}".format(all_final_reward_20_dis))
         logger.info("auc: {0:7.4f}".format(auc_dis))
+
+        if summary:
+            feed_dict = {self.dev_all_final_reward_1: all_final_reward_1,
+                         self.dev_all_final_reward_3: all_final_reward_3,
+                         self.dev_all_final_reward_5: all_final_reward_5,
+                         self.dev_all_final_reward_10: all_final_reward_10,
+                         self.dev_all_final_reward_20: all_final_reward_20,
+                         self.dev_all_final_reward_1_dis: all_final_reward_1_dis,
+                         self.dev_all_final_reward_3_dis: all_final_reward_3_dis,
+                         self.dev_all_final_reward_5_dis: all_final_reward_5_dis,
+                         self.dev_all_final_reward_10_dis: all_final_reward_10_dis,
+                         self.dev_all_final_reward_20_dis: all_final_reward_20_dis,
+                         self.dev_map: auc,
+                         self.dev_map_dis: auc_dis}
+            merged_dev_summary_val = sess.run(self.merged_dev_summary, feed_dict=feed_dict)
+            self.summary_writer.add_summary(merged_dev_summary_val, self.batch_counter)
 
     def top_k(self, scores, k):
         scores = scores.reshape(-1, k * self.max_num_actions)  # [B, (k*max_num_actions)]
@@ -719,7 +778,7 @@ if __name__ == '__main__':
         trainer.test(sess, beam=True, print_paths=True, save_model=False)
 
 
-        print options['nell_evaluation']
+        print(options['nell_evaluation'])
         if options['nell_evaluation'] == 1:
             mean_ap = nell_eval(path_logger_file + "/" + "test_beam/" + "pathsanswers", trainer.data_input_dir+'/sort_test.pairs' )
             with open(output_dir + '/scores.txt', 'a') as score_file:
