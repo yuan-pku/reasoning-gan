@@ -18,7 +18,8 @@ import sys
 from code.model.baseline import ReactiveBaseline
 from code.model.nell_eval import nell_eval
 from scipy.misc import logsumexp as lse
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 logger = logging.getLogger()
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
@@ -105,7 +106,7 @@ class Trainer(object):
             self.candidate_entity_sequence.append(next_possible_entities)
             self.entity_sequence.append(start_entities)
         self.loss_before_reg = tf.constant(0.0)
-        self.per_example_loss, self.per_example_logits, self.action_idx, self.confidence = self.agent(
+        self.per_example_loss, self.per_example_logits, self.action_idx = self.agent(
             self.candidate_relation_sequence,
             self.candidate_entity_sequence, self.entity_sequence,
             self.input_path,
@@ -119,7 +120,6 @@ class Trainer(object):
         tf.summary.scalar('loss_before_reg', tf.reduce_mean(self.loss_before_reg))
         self.gan_reward_ph = tf.placeholder(tf.float32, shape=(None,))
         tf.summary.histogram('rewards', self.gan_reward_ph)
-        tf.summary.histogram('confidence', self.confidence)
         self.merged_summary = tf.summary.merge_all()
 
         self.dev_all_final_reward_1 = tf.Variable(0.0)
@@ -172,7 +172,7 @@ class Trainer(object):
 
         with tf.variable_scope("policy_steps_unroll") as scope:
             scope.reuse_variables()
-            self.test_loss, test_state, self.test_logits, self.test_action_idx, self.chosen_relation, self.test_confidence = self.agent.step(
+            self.test_loss, test_state, self.test_logits, self.test_action_idx, self.chosen_relation = self.agent.step(
                 self.next_relations, self.next_entities, formated_state, self.prev_relation, self.query_embedding,
                 self.current_entities, self.input_path[0], self.range_arr, self.first_state_of_test)
             self.test_state = tf.stack(test_state)
@@ -232,8 +232,6 @@ class Trainer(object):
             fetches = self.per_example_loss + self.action_idx + self.per_example_logits
         else:
             fetches = self.per_example_loss + self.action_idx + [self.loss_op] + self.per_example_logits + [self.dummy] + [self.merged_summary]
-
-        fetches += [self.confidence]
 
         feeds = [self.first_state_of_test] + self.candidate_relation_sequence+ self.candidate_entity_sequence + self.input_path + \
                 [self.query_relation] + [self.cum_discounted_reward] + [self.range_arr] + self.entity_sequence + [self.gan_reward_ph]
@@ -295,7 +293,6 @@ class Trainer(object):
                 logits.append(per_example_logits)
                 # action = np.squeeze(action, axis=1)  # [B,]
                 state = episode(idx)
-            confidence = sess.partial_run(h, self.confidence)
             loss_before_regularization = np.stack(loss_before_regularization, axis=1)
 
             if self.batch_counter % 2 != 0:
@@ -308,7 +305,7 @@ class Trainer(object):
             rewards, gan_rewards = episode.get_reward(sess=sess)
 
             # computed cumulative discounted reward
-            cum_discounted_reward = self.calc_cum_discounted_reward(gan_rewards * confidence)  # [B, T]
+            cum_discounted_reward = self.calc_cum_discounted_reward(gan_rewards)  # [B, T]
 
 
             # backprop
@@ -407,8 +404,8 @@ class Trainer(object):
                 feed_dict[self.prev_state] = agent_mem
                 feed_dict[self.prev_relation] = previous_relation
 
-                loss, agent_mem, test_scores, test_action_idx, chosen_relation, test_confidence = sess.run(
-                    [self.test_loss, self.test_state, self.test_logits, self.test_action_idx, self.chosen_relation, self.test_confidence],
+                loss, agent_mem, test_scores, test_action_idx, chosen_relation= sess.run(
+                    [self.test_loss, self.test_state, self.test_logits, self.test_action_idx, self.chosen_relation],
                     feed_dict=feed_dict)
 
 
@@ -461,7 +458,6 @@ class Trainer(object):
             # ask environment for final reward
             rewards, rewards_gan = episode.get_reward(sess)  # [B*test_rollouts]
             reward_reshape = np.reshape(rewards, (temp_batch_size, self.test_rollouts))  # [orig_batch, test_rollouts]
-            self.log_probs += np.log(test_confidence)
             self.log_probs = np.reshape(self.log_probs, (temp_batch_size, self.test_rollouts))
             score_dis = np.reshape(rewards_gan, (temp_batch_size, self.test_rollouts))  # scores given by discriminator
             sorted_indx = np.argsort(-self.log_probs)
@@ -475,7 +471,10 @@ class Trainer(object):
             AP = 0
             ce = episode.state['current_entities'].reshape((temp_batch_size, self.test_rollouts))
             se = episode.start_entities.reshape((temp_batch_size, self.test_rollouts))
+
             for b in range(temp_batch_size):
+                query_rel_ent = (se[b][0], self.qr[b * self.test_rollouts])
+                # print(self.store_all_correct[query_rel_ent])
                 answer_pos = None
                 seen = set()
                 pos = 0
