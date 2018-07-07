@@ -357,6 +357,8 @@ class Trainer(object):
         all_final_reward_20_dis = 0
         auc_dis = 0
 
+        E_hit = 0.
+
         total_examples = self.test_environment.total_no_examples
         for episode in tqdm(self.test_environment.get_episodes()):
             batch_counter += 1
@@ -502,8 +504,12 @@ class Trainer(object):
                                         final_reward_1 += 1
                 if answer_pos == None:
                     AP += 0
+                    E_hit += 0
                 else:
                     AP += 1.0/((answer_pos+1))
+                    if self.pool == 'sum':
+                        E_hit += np.exp(final_scores[answer])
+
                 if print_paths:
                     qr = self.train_environment.grapher.rev_relation_vocab[self.qr[b * self.test_rollouts]]
                     start_e = self.rev_entity_vocab[episode.start_entities[b * self.test_rollouts]]
@@ -629,6 +635,8 @@ class Trainer(object):
         all_final_reward_20_dis /= total_examples
         auc_dis /= total_examples
 
+        E_hit /= total_examples
+
         if save_model:
             if auc >= self.max_hits_at_10:
                 self.max_hits_at_10 = auc
@@ -658,6 +666,8 @@ class Trainer(object):
             score_file.write("\n")
             score_file.write("auc: {0:7.4f}".format(auc))
             score_file.write("\n")
+            score_file.write("E_hit: {0:7.4f}".format(E_hit))
+            score_file.write("\n")
             score_file.write("\n")
             score_file.write("Hits@1: {0:7.4f}".format(all_final_reward_1_dis))
             score_file.write("\n")
@@ -679,6 +689,7 @@ class Trainer(object):
         logger.info("Hits@10: {0:7.4f}".format(all_final_reward_10))
         logger.info("Hits@20: {0:7.4f}".format(all_final_reward_20))
         logger.info("auc: {0:7.4f}".format(auc))
+        logger.info("E_hit: {0:7.4f}".format(E_hit))
         logger.info("Hits@1: {0:7.4f}".format(all_final_reward_1_dis))
         logger.info("Hits@3: {0:7.4f}".format(all_final_reward_3_dis))
         logger.info("Hits@5: {0:7.4f}".format(all_final_reward_5_dis))
@@ -766,14 +777,14 @@ if __name__ == '__main__':
     with tf.Session(config=config) as sess:
         trainer.initialize(restore=save_path, sess=sess)
 
-        trainer.test_rollouts = 100
+        trainer.test_rollouts = options['test_rollouts']
 
         os.mkdir(path_logger_file + "/" + "test_beam")
         trainer.path_logger_file_ = path_logger_file + "/" + "test_beam" + "/paths"
         with open(output_dir + '/scores.txt', 'a') as score_file:
             score_file.write("Test (beam) scores with best model from " + save_path + "\n")
         trainer.test_environment = trainer.test_test_environment
-        trainer.test_environment.test_rollouts = 100
+        trainer.test_environment.test_rollouts = options['test_rollouts']
 
         trainer.test(sess, beam=True, print_paths=True, save_model=False)
 

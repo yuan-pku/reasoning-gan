@@ -113,7 +113,7 @@ class Agent(object):
 
         # loss
         # 5a.
-        label_action =  tf.squeeze(action, axis=1)
+        label_action = tf.squeeze(action, axis=1)
         loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=scores, labels=label_action)  # [B,]
 
         # 6. Map back to true id

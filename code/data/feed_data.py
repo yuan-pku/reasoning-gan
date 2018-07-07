@@ -8,7 +8,7 @@ import os
 
 
 class RelationEntityBatcher():
-    def __init__(self, input_dir, batch_size, entity_vocab, relation_vocab, mode = "train"):
+    def __init__(self, input_dir, batch_size, entity_vocab, relation_vocab, mode="train"):
         self.input_dir = input_dir
         self.input_file = input_dir+'/{0}.txt'.format(mode)
         self.batch_size = batch_size
@@ -21,7 +21,7 @@ class RelationEntityBatcher():
 
 
     def get_next_batch(self):
-        if self.mode == 'train':
+        if self.mode == 'train' or self.mode == 'graph':
             yield self.yield_next_batch_train()
         else:
             yield self.yield_next_batch_test()
@@ -30,7 +30,7 @@ class RelationEntityBatcher():
     def create_triple_store(self, input_file):
         self.store_all_correct = defaultdict(set)
         self.store = []
-        if self.mode == 'train':
+        if self.mode == 'train' or self.mode == 'graph':
             with open(input_file) as raw_input_file:
                 csv_file = csv.reader(raw_input_file, delimiter = '\t' )
                 for line in csv_file:

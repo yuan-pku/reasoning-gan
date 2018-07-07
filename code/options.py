@@ -41,7 +41,7 @@ def read_options():
     parser.add_argument("--total_pretrain_iterations", default=0, type=int)
 
     parser.add_argument("--Lambda", default=0.0, type=float)
-    parser.add_argument("--pool", default="max", type=str)
+    parser.add_argument("--pool", default="sum", type=str)
     parser.add_argument("--eval_every", default=100, type=int)
     parser.add_argument("--use_entity_embeddings", default=0, type=int)
     parser.add_argument("--train_entity_embeddings", default=0, type=int)

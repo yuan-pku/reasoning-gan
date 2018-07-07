@@ -116,6 +116,11 @@ class env(object):
                                                  batch_size=params['batch_size'],
                                                  entity_vocab=params['entity_vocab'],
                                                  relation_vocab=params['relation_vocab'])
+            self.pretrain_batcher = RelationEntityBatcher(input_dir=input_dir,
+                                                          mode='graph',
+                                                          batch_size=params['batch_size'],
+                                                          entity_vocab=params['entity_vocab'],
+                                                          relation_vocab=params['relation_vocab'])
             self.discriminator = DistMult(batch_size=params['batch_size'],
                                           num_rollouts=params['num_rollouts'],
                                           relTotal=len(params['relation_vocab']),
@@ -151,7 +156,7 @@ class env(object):
                     yield Episode(self.grapher, data, params)
 
     def pretrain(self, sess, max_epoch=100):
-        for ind, data in enumerate(self.batcher.yield_next_batch_train()):
+        for ind, data in enumerate(self.pretrain_batcher.yield_next_batch_train()):
             if ind == max_epoch:
                 return
             start_entities, query_relation, end_entities, all_answers = data
@@ -167,20 +172,23 @@ class env(object):
                          self.discriminator.batch_t: train_t,
                          self.discriminator.batch_r: train_r}
 
-            _, loss = sess.run([self.discriminator.train_op, self.discriminator.loss], feed_dict)
+            _, loss1 = sess.run([self.discriminator.train_op, self.discriminator.loss], feed_dict)
+            #
+            # start_entities, query_relation, end_entities, all_answers = data
+            # start_entities = np.repeat(start_entities, self.num_rollouts)
+            # query_relation = np.repeat(query_relation, self.num_rollouts)
+            # end_entities = np.repeat(end_entities, self.num_rollouts)
+            # neg_samples = np.random.randint(self.entity_vocab_size, size=start_entities.shape[0])
+            #
+            # train_h = np.stack([start_entities, neg_samples], -1)
+            # train_r = np.stack([query_relation, query_relation], -1)
+            # train_t = np.stack([end_entities, end_entities], -1)
+            # feed_dict = {self.discriminator.batch_h: train_h,
+            #              self.discriminator.batch_t: train_t,
+            #              self.discriminator.batch_r: train_r}
+            #
+            # _, loss2 = sess.run([self.discriminator.train_op, self.discriminator.loss], feed_dict)
 
-            start_entities, query_relation, end_entities, all_answers = data
-            start_entities = np.repeat(start_entities, self.num_rollouts)
-            query_relation = np.repeat(query_relation, self.num_rollouts)
-            end_entities = np.repeat(end_entities, self.num_rollouts)
-            neg_samples = np.random.randint(self.entity_vocab_size, size=start_entities.shape[0])
-
-            train_h = np.stack([start_entities, neg_samples], -1)
-            train_r = np.stack([query_relation, query_relation], -1)
-            train_t = np.stack([end_entities, end_entities], -1)
-            feed_dict = {self.discriminator.batch_h: train_h,
-                         self.discriminator.batch_t: train_t,
-                         self.discriminator.batch_r: train_r}
-
-            _, loss = sess.run([self.discriminator.train_op, self.discriminator.loss], feed_dict)
+            if ind % 100 == 0:
+                print(loss1)
 
