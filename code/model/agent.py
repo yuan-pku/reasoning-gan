@@ -127,7 +127,7 @@ class Agent(object):
         chosen_relation = tf.gather_nd(next_relations, tf.transpose(tf.stack([range_arr, action_idx])))
 
         # 7. Compute confidence
-        confidence = tf.squeeze(self.confidence_MLP(state_query_concat))
+        confidence = self.confidence_MLP(state_query_concat)
 
         return loss, new_state, tf.nn.log_softmax(scores), action_idx, chosen_relation, confidence
 
