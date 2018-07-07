@@ -298,9 +298,11 @@ class Trainer(object):
             confidence = sess.partial_run(h, self.confidence)
             loss_before_regularization = np.stack(loss_before_regularization, axis=1)
 
-            # train the discriminator
-            dis_loss = 0.02 * episode.train_reward(sess=sess, num_d_steps=self.num_d_steps) + 0.98 * dis_loss
-            logger.info("batch_counter: {0}, loss: {1}".format(self.batch_counter, dis_loss))
+            if self.batch_counter % 2 != 0:
+                # train the discriminator
+                dis_loss = 0.02 * episode.train_reward(sess=sess, num_d_steps=self.num_d_steps) + 0.98 * dis_loss
+                logger.info("batch_counter: {0}, loss: {1}".format(self.batch_counter, dis_loss))
+                continue
 
             # get the final reward from the environment
             rewards, gan_rewards = episode.get_reward(sess=sess)
