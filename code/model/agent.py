@@ -69,6 +69,12 @@ class Agent(object):
             output = tf.layers.dense(hidden, self.m * self.embedding_size, activation=tf.nn.relu)
         return output
 
+    def confidence_MLP(self, state):
+        with tf.variable_scope("MLP_for_confidence"):
+            hidden = tf.layers.dense(state, 4 * self.hidden_size, activation=tf.nn.tanh)
+            output = tf.layers.dense(hidden, 1, activation=tf.nn.sigmoid)
+        return output
+
     def action_encoder(self, next_relations, next_entities):
         with tf.variable_scope("lookup_table_edge_encoder"):
             relation_embedding = tf.nn.embedding_lookup(self.relation_lookup_table, next_relations)
@@ -120,7 +126,10 @@ class Agent(object):
         action_idx = tf.squeeze(action)
         chosen_relation = tf.gather_nd(next_relations, tf.transpose(tf.stack([range_arr, action_idx])))
 
-        return loss, new_state, tf.nn.log_softmax(scores), action_idx, chosen_relation
+        # 7. Compute confidence
+        confidence = tf.squeeze(self.confidence_MLP(state_query_concat))
+
+        return loss, new_state, tf.nn.log_softmax(scores), action_idx, chosen_relation, confidence
 
     def __call__(self, candidate_relation_sequence, candidate_entity_sequence, current_entities,
                  path_label, query_relation, range_arr, first_step_of_test, T=3, entity_sequence=0):
@@ -146,19 +155,20 @@ class Agent(object):
 
                 path_label_t = path_label[t]  # [B]
 
-                loss, state, logits, idx, chosen_relation = self.step(next_possible_relations,
-                                                                              next_possible_entities,
-                                                                              state, prev_relation, query_embedding,
-                                                                              current_entities_t,
-                                                                              label_action=path_label_t,
-                                                                              range_arr=range_arr,
-                                                                              first_step_of_test=first_step_of_test)
+                loss, state, logits, idx, chosen_relation, confidence = self.step(next_possible_relations,
+                                                                                  next_possible_entities,
+                                                                                  state, prev_relation,
+                                                                                  query_embedding,
+                                                                                  current_entities_t,
+                                                                                  label_action=path_label_t,
+                                                                                  range_arr=range_arr,
+                                                                                  first_step_of_test=first_step_of_test)
 
                 all_loss.append(loss)
                 all_logits.append(logits)
                 action_idx.append(idx)
                 prev_relation = chosen_relation
 
-            # [(B, T), 4D]
+        # [(B, T), 4D]
 
-        return all_loss, all_logits, action_idx
+        return all_loss, all_logits, action_idx, confidence
