@@ -47,7 +47,7 @@ class RelationEntityGrapher:
         del self.store
         self.store = None
 
-    def return_next_actions(self, current_entities, start_entities, query_relations, answers, all_correct_answers, last_step, rollouts):
+    def return_next_actions(self, current_entities, start_entities, query_relations, answers, all_correct_answers, last_step, rollouts, mode):
         ret = self.array_store[current_entities, :, :].copy()
         for i in range(current_entities.shape[0]):
             if current_entities[i] == start_entities[i]:
@@ -62,7 +62,7 @@ class RelationEntityGrapher:
 
                 correct_e2 = answers[i]
                 for j in range(entities.shape[0]):
-                    if entities[j] in all_correct_answers[i/rollouts] and entities[j] != correct_e2:
+                    if entities[j] in all_correct_answers[i//rollouts] and entities[j] != correct_e2:
                         entities[j] = self.ePAD
                         relations[j] = self.rPAD
 

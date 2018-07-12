@@ -2,7 +2,7 @@
 
 data_input_dir="datasets/data_preprocessed/FB15K-237/"
 vocab_dir="datasets/data_preprocessed/FB15K-237/vocab"
-total_iterations=3000
+total_iterations=10000
 path_length=3
 hidden_size=50
 embedding_size=50
@@ -13,12 +13,12 @@ use_entity_embeddings=0
 train_entity_embeddings=0
 train_relation_embeddings=1
 base_output_dir="output/fb15k-237/"
-load_model=1
+load_model=0
 model_load_dir="output/fb15k-237/d662_3_0.08_100_0.02/model/model.ckpt"
 nell_evaluation=0
-num_d_steps=10
+num_d_steps=1
 total_pretrain_iterations=0
-dis_weight_decay=1e-5
+dis_weight_decay=0
 dis_embedding_size=100
 
 
